@@ -4,6 +4,7 @@ import platform
 import sys
 import zipfile
 import shutil
+import requests
 
 def run_command(command):
     """Run a shell command and check for errors."""
@@ -185,43 +186,93 @@ def install_sdk_and_ndk():
 
     print("\nAndroid SDK components installation completed")
 
+def download_file(url, filename):
+    """Download a file from URL with progress indication."""
+    try:
+        print(f"Downloading from {url}")
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+        total_size = int(response.headers.get('content-length', 0))
+        block_size = 1024  # 1 Kibibyte
+        
+        with open(filename, 'wb') as f:
+            for data in response.iter_content(block_size):
+                f.write(data)
+                
+        return True
+    except Exception as e:
+        print(f"Error downloading file: {e}")
+        if os.path.exists(filename):
+            os.remove(filename)
+        return False
+
 def download_gradle():
     """Download and install Gradle."""
     print("Downloading Gradle...")
     gradle_version = "8.4"
     url = f"https://services.gradle.org/distributions/gradle-{gradle_version}-bin.zip"
-    filename = "gradle.zip"
+    filename = os.path.abspath("gradle.zip")
     
-    # Download Gradle
-    run_command(f"curl -o {filename} {url}")
+    # First ensure any old files are cleaned up
+    if os.path.exists(filename):
+        os.remove(filename)
     
-    # Create gradle directory if it doesn't exist
-    gradle_dir = os.path.abspath("gradle")
-    os.makedirs(gradle_dir, exist_ok=True)
+    # Download Gradle using the new download function
+    if not download_file(url, filename):
+        print("Failed to download Gradle. Please check your internet connection and try again.")
+        return False
     
-    # Extract Gradle
-    print("Extracting Gradle...")
-    if platform.system() == "Windows":
+    # Verify the zip file
+    try:
         with zipfile.ZipFile(filename, 'r') as zip_ref:
+            # Create gradle directory if it doesn't exist
+            gradle_dir = os.path.abspath("gradle")
+            os.makedirs(gradle_dir, exist_ok=True)
+            
+            print("Extracting Gradle...")
             zip_ref.extractall(gradle_dir)
-    else:
-        run_command(f"unzip -o {filename} -d {gradle_dir}")
+    except zipfile.BadZipFile:
+        print("Error: The downloaded file is not a valid zip file.")
+        if os.path.exists(filename):
+            os.remove(filename)
+        return False
+    except Exception as e:
+        print(f"Error extracting Gradle: {e}")
+        if os.path.exists(filename):
+            os.remove(filename)
+        return False
     
-    # Set up environment variables
-    gradle_home = os.path.join(gradle_dir, f"gradle-{gradle_version}")
-    os.environ["GRADLE_HOME"] = gradle_home
-    
-    # Add Gradle to PATH
-    gradle_bin = os.path.join(gradle_home, "bin")
-    if platform.system() == "Windows":
-        os.environ["PATH"] = f"{gradle_bin};{os.environ['PATH']}"
-    else:
-        os.environ["PATH"] = f"{gradle_bin}:{os.environ['PATH']}"
-    
-    # Clean up
-    os.remove(filename)
-    print(f"Gradle {gradle_version} installed successfully")
-    print(f"GRADLE_HOME set to: {gradle_home}")
+    try:
+        # Set up environment variables
+        gradle_home = os.path.join(gradle_dir, f"gradle-{gradle_version}")
+        os.environ["GRADLE_HOME"] = gradle_home
+        
+        # Add Gradle to PATH
+        gradle_bin = os.path.join(gradle_home, "bin")
+        if platform.system() == "Windows":
+            os.environ["PATH"] = f"{gradle_bin};{os.environ['PATH']}"
+        else:
+            os.environ["PATH"] = f"{gradle_bin}:{os.environ['PATH']}"
+        
+        # Clean up
+        os.remove(filename)
+        print(f"Gradle {gradle_version} installed successfully")
+        print(f"GRADLE_HOME set to: {gradle_home}")
+        
+        # Verify gradle installation
+        gradle_exe = "gradle.bat" if platform.system() == "Windows" else "gradle"
+        gradle_path = os.path.join(gradle_bin, gradle_exe)
+        
+        if os.path.exists(gradle_path):
+            print("Gradle installation verified successfully")
+            return True
+        else:
+            print(f"Warning: Gradle executable not found at {gradle_path}")
+            return False
+            
+    except Exception as e:
+        print(f"Error setting up Gradle environment: {e}")
+        return False
 
 def create_android_project_template(app_name, package_name):
     """Create a basic Android project template."""
@@ -530,8 +581,13 @@ def verify_installation():
     print("All required components are installed successfully!")
 
 def main():
-    """Main function to set up Android development environment."""
-    print("Setting up Android development environment...")
+    """Main function to set up the Android development environment."""
+    print("Starting Android development environment setup...")
+    
+    # Install dependencies in order
+    if not download_gradle():
+        print("Error: Failed to install Gradle. Please check the logs above for details.")
+        return
     
     # Create directories
     os.makedirs("android-sdk", exist_ok=True)
@@ -544,7 +600,6 @@ def main():
     tools_filename = download_android_tools()
     extract_tools(tools_filename)
     install_sdk_and_ndk()
-    download_gradle()
     install_python_dependencies()
     verify_installation()
     create_android_project_template("MyJavaApp", "com.example.myjavaapp")
